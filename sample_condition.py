@@ -15,11 +15,26 @@ from data.dataloader import get_dataset, get_dataloader
 from util.img_utils import clear_color, mask_generator
 from util.logger import get_logger
 
+import numpy as np
+import random
+
 
 def load_yaml(file_path: str) -> dict:
     with open(file_path) as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     return config
+
+
+def set_seed(seed: int = 42) -> None:
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    # When running on the CuDNN backend, two further options must be set
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # Set a fixed value for the hash seed
+    os.environ["PYTHONHASHSEED"] = str(seed)
 
 
 def main():
@@ -71,8 +86,8 @@ def main():
     # Working directory
     out_path = os.path.join(args.save_dir, measure_config['operator']['name'])
     os.makedirs(out_path, exist_ok=True)
-    for img_dir in ['input', 'recon', 'progress', 'label']:
-        os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
+    # for img_dir in ['input', 'recon', 'progress', 'label']:
+    #     os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
 
     # Prepare dataloader
     data_config = task_config['data']
@@ -109,26 +124,54 @@ def main():
             y = operator.forward(ref_img)
             y_n = noiser(y)
 
-        # Sampling
-        x_start = torch.randn(ref_img.shape, device=device).requires_grad_()
+        # Number of samples from the latent variable and the parameters
+        T_1 = 4 # samples from the latent variable
+        T_2 = 4 # samples from the parameter space
 
-        # replicate the input
-        batch_size = 16
-        x_start_rep = x_start.repeat(batch_size, 1, 1, 1)
-        y_n_rep = y_n.repeat(batch_size, 1, 1, 1)
+        # Generate an initialization of the latent variable
+        x_start = torch.randn((T_1,ref_img.shape[1],ref_img.shape[2],ref_img.shape[3]), device=device).requires_grad_()
+        y_n_rep = y_n.repeat(T_1, 1, 1, 1)
 
-        sample = sample_fn(x_start=x_start_rep, measurement=y_n_rep, record=False, save_root=out_path)
+        # Container for the samples from the posterior distribution
+        samples = torch.zeros((T_2,T_1,ref_img.shape[1],ref_img.shape[2],ref_img.shape[3]))
 
-        plt.imsave(os.path.join(out_path, 'input', fname), clear_color(y_n))
-        plt.imsave(os.path.join(out_path, 'label', fname), clear_color(ref_img))
+        for t2 in range(T_2):
+            # Fix the seed for the ith test example
+            set_seed(T_2 * i + t2)
+            # Generate a sample from the posterior distribution
+            sample = sample_fn(x_start=x_start, measurement=y_n_rep, record=False, save_root=out_path)
+            # append the container
+            samples[t2,:,:,:,:] = sample
 
-        for i in range(batch_size):
-            plt.imsave(os.path.join(out_path, 'recon', fname[:-4]+"_"+str(i)+".png"), clear_color(sample[i:i+1,:,:,:]))
+        # Compute the predictive mean
+        print(samples.shape)
+        pred_mean = torch.mean(samples, (0,1))
+        pred_mean = clear_color(pred_mean)
 
+        # Calculate the predictive variance
+        pred_var = torch.var(samples, (0,1)).detach().cpu().numpy()
 
+        # decompose the uncertainty into epistemic and aleatoric
+        epistemic_var = torch.var(torch.mean(samples, 1), 0).detach().cpu().numpy()
+        aleatoric_var = torch.mean(torch.var(samples, 1), 0).detach().cpu().numpy()
 
+        # Normalize the generated generated samples to [0,1]
+        normalized_samples = np.zeros((T_2,T_1,ref_img.shape[2],ref_img.shape[3],ref_img.shape[1]))
+        for t1 in range(T_1):
+            for t2 in range(T_2):
+                sample = samples[t2,t1,:,:,:]
+                normalized_sample = clear_color(sample)
+                normalized_samples[t2,t1,:,:,:] = normalized_sample
 
-
+        # save the results as a npz file (buradayiz)
+        np.savez_compressed(os.path.join(out_path, fname[:-4]+"_"+str(i)+".npz"),
+            gt = clear_color(ref_img),
+            measurement = clear_color(y_n),
+            generated_samples = normalized_samples,
+            pred_mean = pred_mean,
+            pred_var = pred_var,
+            epistemic_var = epistemic_var,
+            aleatoric_var = aleatoric_var)
 
 
 if __name__ == '__main__':
