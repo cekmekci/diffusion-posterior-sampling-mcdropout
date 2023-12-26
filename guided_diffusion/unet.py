@@ -35,7 +35,7 @@ def create_model(
     num_head_channels=-1,
     num_heads_upsample=-1,
     use_scale_shift_norm=False,
-    dropout=0,
+    dropout=0.1,
     resblock_updown=False,
     use_fp16=False,
     use_new_attention_order=False,
@@ -89,6 +89,15 @@ def create_model(
     except Exception as e:
         print(f"Got exception: {e} / Randomly initialize")
     return model
+
+
+class MCDropout(nn.Module):
+    def __init__(self, p=0.1):
+        super().__init__()
+        self.p = p
+    def forward(self, inputs):
+        return nn.functional.dropout(inputs, p=self.p, training=True)
+
 
 class AttentionPool2d(nn.Module):
     """
@@ -277,7 +286,7 @@ class ResBlock(TimestepBlock):
         self.out_layers = nn.Sequential(
             normalization(self.out_channels),
             nn.SiLU(),
-            nn.Dropout(p=dropout),
+            MCDropout(p=dropout),
             zero_module(
                 conv_nd(dims, self.out_channels, self.out_channels, 3, padding=1)
             ),
@@ -503,7 +512,7 @@ class UNetModel(nn.Module):
         out_channels,
         num_res_blocks,
         attention_resolutions,
-        dropout=0,
+        dropout=0.1,
         channel_mult=(1, 2, 4, 8),
         conv_resample=True,
         dims=2,
@@ -766,7 +775,7 @@ class EncoderUNetModel(nn.Module):
         out_channels,
         num_res_blocks,
         attention_resolutions,
-        dropout=0,
+        dropout=0.1,
         channel_mult=(1, 2, 4, 8),
         conv_resample=True,
         dims=2,
