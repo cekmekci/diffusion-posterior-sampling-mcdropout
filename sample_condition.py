@@ -125,8 +125,8 @@ def main():
             y_n = noiser(y)
 
         # Number of samples from the latent variable and the parameters
-        T_1 = 4 # samples from the latent variable
-        T_2 = 4 # samples from the parameter space
+        T_1 = 32 # samples from the latent variable
+        T_2 = 5 # samples from the parameter space
 
         # Generate an initialization of the latent variable
         x_start = torch.randn((T_1,ref_img.shape[1],ref_img.shape[2],ref_img.shape[3]), device=device).requires_grad_()
